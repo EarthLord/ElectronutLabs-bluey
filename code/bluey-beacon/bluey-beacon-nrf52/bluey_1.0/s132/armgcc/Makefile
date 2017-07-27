@@ -1,6 +1,10 @@
 PROJECT_NAME     := ble_app_beacon_pca10040_s132
 TARGETS          := nrf52832_xxaa
 OUTPUT_DIRECTORY := _build
+DEBUGGER         := JLINK
+#Install ARM GCC compiler
+#https://launchpad.net/~team-gcc-arm-embedded/+archive/ubuntu/ppa
+GDB              := arm-none-eabi-gdb
 
 SDK_ROOT := ../../../../../../..
 PROJ_DIR := ../../..
@@ -236,15 +240,33 @@ $(foreach target, $(TARGETS), $(call define_target, $(target)))
 
 # Flash the program
 flash: $(OUTPUT_DIRECTORY)/nrf52832_xxaa.hex
-	@echo Flashing: $<
-	nrfjprog --program $< -f nrf52 --sectorerase
-	nrfjprog --reset -f nrf52
+	@echo Flashing: $<; \
+	if [ "$(DEBUGGER)" = "JLINK" ]; then \
+		~/Desktop/nrfjprog/nrfjprog --program $< -f nrf52 --sectorerase; \
+		~/Desktop/nrfjprog/nrfjprog --reset -f nrf52; \
+	elif [ "$(DEBUGGER)" = "BMP" ]; then \
+		$(GDB) -q -ex 'target extended-remote /dev/ttyBmpGdb' -ex 'monitor swdp_scan' -ex 'attach 1' -ex 'load' -ex 'compare-sections' -ex 'detach' -ex 'quit' $<; \
+	else\
+		echo "Use the DEBUGGER variable to specify the debugger to be used for uploading"; \
+	fi
 
 # Flash softdevice
 flash_softdevice:
-	@echo Flashing: s132_nrf52_3.0.0_softdevice.hex
-	nrfjprog --program $(SDK_ROOT)/components/softdevice/s132/hex/s132_nrf52_3.0.0_softdevice.hex -f nrf52 --sectorerase
-	nrfjprog --reset -f nrf52
+	@echo Flashing: s132_nrf52_3.0.0_softdevice.hex; \
+	if [ "$(DEBUGGER)" = "JLINK" ]; then\
+		~/Desktop/nrfjprog/nrfjprog --program $(SDK_ROOT)/components/softdevice/s132/hex/s132_nrf52_3.0.0_softdevice.hex -f nrf52 --sectorerase; \
+		~/Desktop/nrfjprog/nrfjprog --reset -f nrf52; \
+	elif [ "$(DEBUGGER)" = "BMP" ]; then \
+		$(GDB) -q -ex 'target extended-remote /dev/ttyBmpGdb' -ex 'monitor swdp_scan' -ex 'attach 1' -ex 'load' -ex 'compare-sections' -ex 'detach' -ex 'quit' $(SDK_ROOT)/components/softdevice/s132/hex/s132_nrf52_3.0.0_softdevice.hex; \
+	else \
+		echo "Use the DEBUGGER variable to specify the debugger to be used for uploading"; \
+	fi
 
 erase:
-	nrfjprog --eraseall -f nrf52
+	@if [ "$(DEBUGGER)" = "JLINK" ]; then\
+		~/Desktop/nrfjprog/nrfjprog --eraseall -f nrf52; \
+	elif [ "$(DEBUGGER)" = "BMP" ]; then \
+		$(GDB) -q -ex 'target extended-remote /dev/ttyBmpGdb' -ex 'monitor swdp_scan' -ex 'attach 1' -ex 'mon erase_mass' -ex 'detach' -ex 'quit'; \
+	else\
+		echo "Use the DEBUGGER variable to specify the debugger to be used for the erase all operation"; \
+	fi
