@@ -1,4 +1,6 @@
-## MeArm using Bluey.
+## Controlling a MeArm using Bluey.
+
+![Bluey MeArm](images/bluey-mearm-sm.jpg)
 
 This is an example project to demonstrate the use of Bluey to control MeArm over BLE.
 
@@ -56,13 +58,13 @@ Testing:
 
 Icon | Value
 ---- | -----
-Up arrow (^) | clawOpen
-Right arrow (>) | rightA
-Left arrow (<) | leftIn
-Down arrow     | baseCW
-1 | baseCCW
-2 | leftOut
-3 | clawClose
-4 | rightB
+Up arrow (^) | leftOut
+Right arrow (>) | baseCW
+Left arrow (<) | baseCCW 
+Down arrow     | leftIn
+1 | rightA
+2 | rightB
+3 | clawOpen
+4 | clawClose
 
 * Pressing any one of these buttons, will result in corresponding change in the position of the servo associated with the button.

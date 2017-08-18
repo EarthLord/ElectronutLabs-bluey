@@ -1,8 +1,24 @@
-/**
- * Bluey Code for MeArm
+/* Copyright (c) 2014 Nordic Semiconductor. All Rights Reserved.
  *
- * Electronut Labs
- * electronut.in
+ * The information contained herein is property of Nordic Semiconductor ASA.
+ * Terms and conditions of usage are described in detail in NORDIC
+ * SEMICONDUCTOR STANDARD SOFTWARE LICENSE AGREEMENT.
+ *
+ * Licensees are granted free, non-transferable use of the information. NO
+ * WARRANTY of ANY KIND is provided. This heading must NOT be removed from
+ * the file.
+ *
+ */
+
+/** @file
+ *
+ * @defgroup ble_sdk_uart_over_ble_main main.c
+ * @{
+ * @ingroup  ble_sdk_app_nus_eval
+ * @brief    UART over BLE application main file.
+ *
+ * This file contains the source code for a sample application that uses the Nordic UART service.
+ * This application uses the @ref srvlib_conn_params module.
  */
 
 #include <stdint.h>
@@ -19,10 +35,16 @@
 #include "ble_nus.h"
 #include "app_uart.h"
 #include "app_util_platform.h"
-#include "app_pwm.h"
 #include "bsp.h"
 #include "bsp_btn_ble.h"
+#include "nrf_drv_twi.h"
 #include "nrf_delay.h"
+
+#include "SSD1306.h"
+#include "Adafruit_GFX.h"
+// TWI
+#include "nrf_drv_twi.h"
+
 
 #define IS_SRVC_CHANGED_CHARACT_PRESENT 0                                           /**< Include the service_changed characteristic. If not enabled, the server's database cannot be changed for the lifetime of the device. */
 
@@ -35,7 +57,7 @@
 #define CENTRAL_LINK_COUNT              0                                           /**< Number of central links used by the application. When changing this number remember to adjust the RAM settings*/
 #define PERIPHERAL_LINK_COUNT           1                                           /**< Number of peripheral links used by the application. When changing this number remember to adjust the RAM settings*/
 
-#define DEVICE_NAME                     "Bluey-MeArm"                               /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "Bluey_OLED"                               /**< Name of device. Will be included in the advertising data. */
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
 #define APP_ADV_INTERVAL                64                                          /**< The advertising interval (in units of 0.625 ms. This value corresponds to 40 ms). */
@@ -57,260 +79,17 @@
 #define UART_TX_BUF_SIZE                256                                         /**< UART TX buffer size. */
 #define UART_RX_BUF_SIZE                256                                         /**< UART RX buffer size. */
 
-static ble_nus_t                        m_nus;                                      /**< Structure to identify the Nordic UART Service. */
 static uint16_t                         m_conn_handle = BLE_CONN_HANDLE_INVALID;    /**< Handle of the current connection. */
 
+// Comment to disable NUS
+#define ENABLE_NUS
+
+#ifdef ENABLE_NUS
+
+static ble_nus_t                        m_nus;                                      /**< Structure to identify the Nordic UART Service. */
 static ble_uuid_t                       m_adv_uuids[] = {{BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE}};  /**< Universally unique service identifier. */
 
-#define BASE_SERVO_CW "baseCW"
-#define BASE_SERVO_CCW "baseCCW"
-#define LEFT_SERVO_IN "leftIn"
-#define LEFT_SERVO_OUT "leftOut"
-#define RIGHT_SERVO_A "rightA"
-#define RIGHT_SERVO_B "rightB"
-#define CLAW_SERVO_OPEN "clawOpen"
-#define CLAW_SERVO_CLOSE "clawClose"
-
-/**
- * @brief structure used to define motion of the servo motors.
- */
-typedef enum _BBEventType {
-    eBBEvent_BaseServo_CW,
-    eBBEvent_BaseServo_CCW,
-    eBBEvent_LeftServo_In,
-    eBBEvent_LeftServo_Out,
-    eBBEvent_RightServo_A,
-    eBBEvent_RightServo_B,
-    eBBEvent_ClawServo_Open,
-    eBBEvent_ClawServo_Close,
-} BBEventType;
-
-/**
- * @brief structure handle pending events
- */
-typedef struct _BBEvent
-{
-    bool pending;
-    BBEventType event;
-    int data;
-} BBEvent;
-
-BBEvent bbEvent;
-
-APP_PWM_INSTANCE(PWM_S1,1);                   // Create the instance "PWM_S1" using TIMER1.
-APP_PWM_INSTANCE(PWM_S2,2);                   // Create the instance "PWM_S2" using TIMER2.
-APP_PWM_INSTANCE(PWM_S3,3);                   // Create the instance "PWM_S3" using TIMER3.
-APP_PWM_INSTANCE(PWM_S4,4);                   // Create the instance "PWM_S4" using TIMER4.
-
-static volatile bool ready_flag;            // A flag indicating PWM status.
-
-/**
- * @brief PWM callback function
- */
-void pwm_ready_callback(uint32_t pwm_id)
-{
-    ready_flag = true;
-}
-
-/**
- * @brief function for PWM initialization
- */
-void pwm_init(void)
-{
-  ret_code_t err_code;
-
-  /** 1-channel PWM, 250 Hz , output on pin 27-30. **/
-  app_pwm_config_t pwm_s1_cfg = APP_PWM_DEFAULT_CONFIG_1CH(4000L, 27);
-  app_pwm_config_t pwm_s2_cfg = APP_PWM_DEFAULT_CONFIG_1CH(4000L, 28);
-  app_pwm_config_t pwm_s3_cfg = APP_PWM_DEFAULT_CONFIG_1CH(4000L, 29);
-  app_pwm_config_t pwm_s4_cfg = APP_PWM_DEFAULT_CONFIG_1CH(4000L, 30);
-
-  // configure default polarity as ACTIVE HIGH
-  pwm_s1_cfg.pin_polarity[0] = APP_PWM_POLARITY_ACTIVE_HIGH;
-  pwm_s2_cfg.pin_polarity[0] = APP_PWM_POLARITY_ACTIVE_HIGH;
-  pwm_s3_cfg.pin_polarity[0] = APP_PWM_POLARITY_ACTIVE_HIGH;
-  pwm_s4_cfg.pin_polarity[0] = APP_PWM_POLARITY_ACTIVE_HIGH;
-
-  // initialize PWM instances
-  err_code = app_pwm_init(&PWM_S1,&pwm_s1_cfg,pwm_ready_callback);
-  APP_ERROR_CHECK(err_code);
-
-  err_code = app_pwm_init(&PWM_S2,&pwm_s2_cfg,pwm_ready_callback);
-  APP_ERROR_CHECK(err_code);
-
-  err_code = app_pwm_init(&PWM_S3,&pwm_s3_cfg,pwm_ready_callback);
-  APP_ERROR_CHECK(err_code);
-
-  err_code = app_pwm_init(&PWM_S4,&pwm_s4_cfg,pwm_ready_callback);
-  APP_ERROR_CHECK(err_code);
-}
-
-bool claw_state = false;
-/**
- * @brief function to handle servo motors.
- */
-void handle_bbevent(BBEvent* bbEvent)
-{
-    uint8_t i;
-    switch(bbEvent->event) {
-        // Turn MeArm base clock-wise
-        case eBBEvent_BaseServo_CW:
-        {
-          app_pwm_enable(&PWM_S1);
-          for(i = 0; i < 20; i++) {
-            app_pwm_channel_duty_set(&PWM_S1, 0, i);
-            nrf_delay_ms(3);
-          }
-          app_pwm_disable(&PWM_S1);
-        }
-        break;
-
-        // Turn MeArm base counter clock-wise
-        case eBBEvent_BaseServo_CCW:
-        {
-          app_pwm_enable(&PWM_S1);
-          for(i = 100; i > 80; i--) {
-            app_pwm_channel_duty_set(&PWM_S1, 0, i);
-            nrf_delay_ms(3);
-          }
-          app_pwm_disable(&PWM_S1);
-        }
-
-        //  Pull MeArm left servo Inward
-        case eBBEvent_LeftServo_In:
-        {
-          app_pwm_enable(&PWM_S2);
-          for(i = 0; i < 20; i++) {
-            app_pwm_channel_duty_set(&PWM_S2, 0, i);
-            nrf_delay_ms(3);
-          }
-          app_pwm_disable(&PWM_S2);
-        }
-        break;
-
-        // Extend MeArm left servo Outward
-        case eBBEvent_LeftServo_Out:
-        {
-          app_pwm_enable(&PWM_S2);
-          for(i = 100; i > 80; i--) {
-            app_pwm_channel_duty_set(&PWM_S2, 0, i);
-            nrf_delay_ms(3);
-          }
-          app_pwm_disable(&PWM_S2);
-        }
-        break;
-
-        // Extend MeArm ahead
-        case eBBEvent_RightServo_A:
-        {
-          app_pwm_enable(&PWM_S3);
-          for(i = 100; i > 80; i--) {
-            app_pwm_channel_duty_set(&PWM_S3, 0, i);
-            nrf_delay_ms(3);
-          }
-          app_pwm_disable(&PWM_S3);  
-        }
-        break;
-
-        // Pull back MeArm
-        case eBBEvent_RightServo_B:
-        {
-          app_pwm_enable(&PWM_S3);
-          for(i = 0; i < 20; i++) {
-            app_pwm_channel_duty_set(&PWM_S3, 0, i);
-            nrf_delay_ms(3);
-          }
-          app_pwm_disable(&PWM_S3);
-        }
-        break;
-
-        // Open MeArm claw
-        case eBBEvent_ClawServo_Open:
-        {
-          if(!claw_state) {
-            app_pwm_enable(&PWM_S4);
-            for(i = 80; i > 0; i--) {
-              app_pwm_channel_duty_set(&PWM_S4, 0, i);
-              nrf_delay_ms(3);
-            }
-            claw_state = false;
-            app_pwm_disable(&PWM_S4);
-          }
-        }
-        break;
-
-        // close MeArm claw
-        case eBBEvent_ClawServo_Close:
-        {
-          if(claw_state){
-            app_pwm_enable(&PWM_S4);
-            for(i = 0; i < 80; i++) {
-              app_pwm_channel_duty_set(&PWM_S4, 0, i);
-              nrf_delay_ms(3);
-            }
-            claw_state = true;
-            app_pwm_disable(&PWM_S4);
-          }
-        }
-        break;
-
-        default:
-            break;
-    }
-    // clear
-    bbEvent->pending = false;
-}
-
-
-/**@brief Function for handling the data from the Nordic UART Service.
- *
- * @details This function will process the data received from the Nordic UART BLE Service and send
- *          it to the UART module.
- *
- * @param[in] p_nus    Nordic UART Service structure.
- * @param[in] p_data   Data to be send to UART module.
- * @param[in] length   Length of the data.
- */
-/**@snippet [Handling the data received over BLE] */
-static void nus_data_handler(ble_nus_t * p_nus, uint8_t * p_data, uint16_t length)
-{
-  // clear events
-  bbEvent.pending = false;
-
-  if (strstr((char*)(p_data), BASE_SERVO_CW)) {
-   bbEvent.pending = true;
-   bbEvent.event = eBBEvent_BaseServo_CW;
-   }
-   else if (strstr((char*)(p_data), BASE_SERVO_CCW)) {
-    bbEvent.pending = true;
-    bbEvent.event = eBBEvent_BaseServo_CCW;
-   }
-   else if (strstr((char*)(p_data), LEFT_SERVO_IN)) {
-     bbEvent.pending = true;
-     bbEvent.event = eBBEvent_LeftServo_In;
-   }
-   else if (strstr((char*)(p_data), LEFT_SERVO_OUT)) {
-     bbEvent.pending = true;
-     bbEvent.event = eBBEvent_LeftServo_Out;
-   }
-   else if (strstr((char*)(p_data), RIGHT_SERVO_A)) {
-     bbEvent.pending = true;
-     bbEvent.event = eBBEvent_RightServo_A;
-   }
-   else if (strstr((char*)(p_data), RIGHT_SERVO_B)) {
-     bbEvent.pending = true;
-     bbEvent.event = eBBEvent_RightServo_B;
-   }
-   else if (strstr((char*)(p_data), CLAW_SERVO_OPEN)) {
-     bbEvent.pending = true;
-     bbEvent.event = eBBEvent_ClawServo_Open;
-   }
-   else if (strstr((char*)(p_data), CLAW_SERVO_CLOSE)) {
-     bbEvent.pending = true;
-     bbEvent.event = eBBEvent_ClawServo_Close;
-   }
-}
-
+#endif
 
 /**@brief Function for assert macro callback.
  *
@@ -358,10 +137,36 @@ static void gap_params_init(void)
     APP_ERROR_CHECK(err_code);
 }
 
+
+#ifdef ENABLE_NUS
+/**@brief Function for handling the data from the Nordic UART Service.
+ *
+ * @details This function will process the data received from the Nordic UART BLE Service and send
+ *          it to the UART module.
+ *
+ * @param[in] p_nus    Nordic UART Service structure.
+ * @param[in] p_data   Data to be send to UART module.
+ * @param[in] length   Length of the data.
+ */
+/**@snippet [Handling the data received over BLE] */
+static void nus_data_handler(ble_nus_t * p_nus, uint8_t * p_data, uint16_t length)
+{
+    for (uint32_t i = 0; i < length; i++)
+    {
+        while (app_uart_put(p_data[i]) != NRF_SUCCESS);
+    }
+    while (app_uart_put('\r') != NRF_SUCCESS);
+    while (app_uart_put('\n') != NRF_SUCCESS);
+}
+/**@snippet [Handling the data received over BLE] */
+#endif
+
 /**@brief Function for initializing services that will be used by the application.
  */
 static void services_init(void)
 {
+
+#ifdef ENABLE_NUS
     uint32_t       err_code;
     ble_nus_init_t nus_init;
 
@@ -371,6 +176,8 @@ static void services_init(void)
 
     err_code = ble_nus_init(&m_nus, &nus_init);
     APP_ERROR_CHECK(err_code);
+#endif // ENABLE_NUS
+
 }
 
 
@@ -582,7 +389,9 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
 static void ble_evt_dispatch(ble_evt_t * p_ble_evt)
 {
     ble_conn_params_on_ble_evt(p_ble_evt);
+#ifdef ENABLE_NUS
     ble_nus_on_ble_evt(&m_nus, p_ble_evt);
+#endif
     on_ble_evt(p_ble_evt);
     ble_advertising_on_ble_evt(p_ble_evt);
     bsp_btn_ble_on_ble_evt(p_ble_evt);
@@ -662,7 +471,7 @@ void bsp_event_handler(bsp_event_t event)
     }
 }
 
-
+#ifdef ENABLE_UART
 /**@brief   Function for handling app_uart events.
  *
  * @details This function will receive a single character from the app_uart module and append it to
@@ -673,26 +482,11 @@ void bsp_event_handler(bsp_event_t event)
 /**@snippet [Handling the data received over UART] */
 void uart_event_handle(app_uart_evt_t * p_event)
 {
-    static uint8_t data_array[BLE_NUS_MAX_DATA_LEN];
-    static uint8_t index = 0;
-    uint32_t       err_code;
+
 
     switch (p_event->evt_type)
     {
         case APP_UART_DATA_READY:
-            UNUSED_VARIABLE(app_uart_get(&data_array[index]));
-            index++;
-
-            if ((data_array[index - 1] == '\n') || (index >= (BLE_NUS_MAX_DATA_LEN)))
-            {
-                err_code = ble_nus_string_send(&m_nus, data_array, index);
-                if (err_code != NRF_ERROR_INVALID_STATE)
-                {
-                    APP_ERROR_CHECK(err_code);
-                }
-
-                index = 0;
-            }
             break;
 
         case APP_UART_COMMUNICATION_ERROR:
@@ -736,7 +530,7 @@ static void uart_init(void)
     APP_ERROR_CHECK(err_code);
 }
 /**@snippet [UART Initialization] */
-
+#endif // ENABLE_UART
 
 /**@brief Function for initializing the Advertising functionality.
  */
@@ -762,10 +556,9 @@ static void advertising_init(void)
     options.ble_adv_fast_interval = APP_ADV_INTERVAL;
     options.ble_adv_fast_timeout  = APP_ADV_TIMEOUT_IN_SECONDS;
 
-    err_code = ble_advertising_init(&advdata, &scanrsp, &options, on_adv_evt, NULL);
+    err_code = ble_advertising_init(&advdata, 0, &options, on_adv_evt, NULL);
     APP_ERROR_CHECK(err_code);
 }
-
 
 /**@brief Function for initializing buttons and leds.
  *
@@ -787,36 +580,98 @@ static void buttons_leds_init(bool * p_erase_bonds)
 }
 
 
+const nrf_drv_twi_t m_twi_master = NRF_DRV_TWI_INSTANCE(0);
+
+/**
+ * @brief TWI initialization.
+ */
+void twi_init (void)
+{
+    ret_code_t err_code;
+
+    const nrf_drv_twi_config_t twi_sensors_config = {
+       .scl                = 2,  
+       .sda                = 3,
+       .frequency          = NRF_TWI_FREQ_100K,
+       .interrupt_priority = APP_IRQ_PRIORITY_HIGH
+    };
+
+    //err_code = nrf_drv_twi_init(&m_twi_lis2dh12, &twi_lis2dh12_config, twi_handler, NULL);
+    err_code = nrf_drv_twi_init(&m_twi_master, &twi_sensors_config, NULL, NULL);        // twi in blocking mode.
+    APP_ERROR_CHECK(err_code);
+
+    nrf_drv_twi_enable(&m_twi_master);
+}
+
+/*
+ * function to read sensor registers.
+*/
+ret_code_t read_register(nrf_drv_twi_t twi_instance, uint8_t device_addr, uint8_t register_addr, uint8_t *p_data, uint8_t bytes, bool no_stop)
+{
+  ret_code_t err_code;
+
+  err_code = nrf_drv_twi_tx(&twi_instance, device_addr, &register_addr, 1, no_stop);
+  APP_ERROR_CHECK(err_code);
+
+  if(err_code != NRF_SUCCESS) {
+    return err_code;
+  }
+
+  err_code = nrf_drv_twi_rx(&twi_instance, device_addr, p_data, bytes);
+  return err_code;
+}
+
+void testdrawcircle(void) {
+  for (int16_t i=0; i< Adafruit_GFX_height()/2; i+=2) {
+    Adafruit_GFX_drawCircle(Adafruit_GFX_width()/2, Adafruit_GFX_height()/2, i, WHITE);
+    SSD1306_display();
+    nrf_delay_ms(200);
+  }
+}
+
 /**@brief Application main function.
  */
 int main(void)
 {
-  uint32_t err_code;
-  bool erase_bonds;
+    bool erase_bonds;
 
-  // Initialize.
-  APP_TIMER_INIT(APP_TIMER_PRESCALER, APP_TIMER_OP_QUEUE_SIZE, false);
-  uart_init();
+    // Initialize.
+    APP_TIMER_INIT(APP_TIMER_PRESCALER, APP_TIMER_OP_QUEUE_SIZE, false);
 
-  buttons_leds_init(&erase_bonds);
-  ble_stack_init();
-  gap_params_init();
-  services_init();
-  advertising_init();
-  conn_params_init();
+    buttons_leds_init(&erase_bonds);
+    ble_stack_init();
+    gap_params_init();
+    services_init();
+    advertising_init();
+    conn_params_init();
 
-  printf("\r\nUART Start!\r\n");
-  err_code = ble_advertising_start(BLE_ADV_MODE_FAST);
-  APP_ERROR_CHECK(err_code);
+    uint32_t err_code;
+    err_code = ble_advertising_start(BLE_ADV_MODE_FAST);
+    APP_ERROR_CHECK(err_code);
 
-  pwm_init();
 
-  // Enter main loop.
-  while(1) {
-      if(bbEvent.pending) {
-        handle_bbevent(&bbEvent);
-      }  }
+#ifdef ENABLE_UART
+    uart_init();
+#endif
+
+    twi_init();
+
+    SSD1306_begin(SSD1306_SWITCHCAPVCC, 0x3C, false);
+    Adafruit_GFX_init(SSD1306_LCDWIDTH, SSD1306_LCDHEIGHT, SSD1306_drawPixel);
+
+    SSD1306_clearDisplay();
+    Adafruit_GFX_drawBitmap(0, 0,  el_logo, 128, 64, 1);
+    SSD1306_display();
+    nrf_delay_ms(1000);
+
+    for (;;) {
+
+      SSD1306_clearDisplay();
+      SSD1306_display();
+
+      testdrawcircle();
+
+      nrf_delay_ms(500);
+    }
+
 }
-/**
- * @}
- */
